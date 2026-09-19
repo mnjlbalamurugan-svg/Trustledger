@@ -33,16 +33,19 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     clean_email = payload.email.strip().lower()
 
-    # Check for existing account
-    existing = db.query(User).filter(func.lower(User.email) == clean_email).first()
+    # Check for existing account (both case-insensitive func.lower and direct match)
+    existing = db.query(User).filter(
+        (func.lower(User.email) == clean_email) | (User.email == clean_email)
+    ).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An account with this email address already exists. Please sign in or use Google."
         )
 
-    # Hash password with PBKDF2-HMAC-SHA256
-    pwd_hash = get_password_hash(payload.password)
+    # Hash password with PBKDF2-HMAC-SHA256 (normalized stripped password)
+    clean_password = payload.password.strip()
+    pwd_hash = get_password_hash(clean_password)
 
     user = User(
         name=payload.name.strip(),
@@ -86,7 +89,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 def login(creds: LoginRequest, db: Session = Depends(get_db)):
     clean_email = creds.email.strip().lower()
 
-    user = db.query(User).filter(func.lower(User.email) == clean_email).first()
+    # Lookup user with dual matching
+    user = db.query(User).filter(
+        (func.lower(User.email) == clean_email) | (User.email == clean_email)
+    ).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -99,6 +105,7 @@ def login(creds: LoginRequest, db: Session = Depends(get_db)):
             detail="This account was registered using Google Sign-In. Please click 'Continue with Google'."
         )
 
+    # Verify password against PBKDF2 hash (supports both exact and stripped password inputs)
     if not verify_password(creds.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -9,7 +9,11 @@ KYC_DIR.mkdir(parents=True, exist_ok=True)
 DOCS_DIR = UPLOAD_DIR / "documents"
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/trustledger.db")
+_raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/trustledger.db")
+if _raw_db_url.startswith("postgres://"):
+    DATABASE_URL = _raw_db_url.replace("postgres://", "postgresql://", 1)
+else:
+    DATABASE_URL = _raw_db_url
 SECRET_KEY = os.getenv("SECRET_KEY", "trustledger-enterprise-production-key-2026")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours

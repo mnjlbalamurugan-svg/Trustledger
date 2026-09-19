@@ -1,6 +1,7 @@
 import os
 import hashlib
 import binascii
+import hmac
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -28,21 +29,41 @@ def get_password_hash(password: str) -> str:
 def verify_password(plain_password: str, stored_hash: str) -> bool:
     """
     Verifies plain password against PBKDF2-HMAC-SHA256 stored hash.
+    Safe against timing attacks, whitespace edge cases, and casing differences.
     """
-    if not stored_hash:
+    if not stored_hash or not plain_password:
         return False
     try:
-        parts = stored_hash.split('$')
+        clean_stored_hash = stored_hash.strip()
+        parts = clean_stored_hash.split('$')
         if len(parts) == 3:
             iterations = int(parts[0])
             salt = binascii.unhexlify(parts[1])
-            expected_hash = parts[2]
+            expected_hash = parts[2].lower()
+
+            # 1. Check exact password
             computed = hashlib.pbkdf2_hmac('sha256', plain_password.encode('utf-8'), salt, iterations)
-            computed_hex = binascii.hexlify(computed).decode('utf-8')
-            return computed_hex == expected_hash
-        # Fallback for legacy hashes during transition
+            computed_hex = binascii.hexlify(computed).decode('utf-8').lower()
+            if hmac.compare_digest(computed_hex, expected_hash):
+                return True
+
+            # 2. Check stripped password fallback (handles mobile autofill/copy-paste spaces)
+            if plain_password.strip() != plain_password:
+                computed_stripped = hashlib.pbkdf2_hmac('sha256', plain_password.strip().encode('utf-8'), salt, iterations)
+                computed_stripped_hex = binascii.hexlify(computed_stripped).decode('utf-8').lower()
+                if hmac.compare_digest(computed_stripped_hex, expected_hash):
+                    return True
+            return False
+
+        # Fallback for legacy hashes
         legacy_hash = hashlib.sha256(f"trustledger_enterprise_salt_{plain_password}".encode("utf-8")).hexdigest()
-        return legacy_hash == stored_hash
+        if hmac.compare_digest(legacy_hash, clean_stored_hash):
+            return True
+        if plain_password.strip() != plain_password:
+            legacy_hash_stripped = hashlib.sha256(f"trustledger_enterprise_salt_{plain_password.strip()}".encode("utf-8")).hexdigest()
+            if hmac.compare_digest(legacy_hash_stripped, clean_stored_hash):
+                return True
+        return False
     except Exception:
         return False
 
