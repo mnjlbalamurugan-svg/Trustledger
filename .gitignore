@@ -1,0 +1,65 @@
+# Environments & Secrets
+.env
+.env.*
+.env.local
+.env.development
+.env.test
+.env.production
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+trustledger.db
+backend/trustledger.db
+
+# Uploads & Uploaded Media (KYC, docs, selfies)
+uploads/
+backend/uploads/
+private/
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini

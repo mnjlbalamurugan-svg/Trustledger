@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #17151C;
+    color: #F1EFF5;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #141218;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #321a42;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8B5CF6;
+}
+
+/* Abstract node animation for login page */
+@keyframes pulseSubtle {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
+}
+
+.animate-pulse-subtle {
+  animation: pulseSubtle 4s ease-in-out infinite;
+}
+
+/* Card hover glow */
+.card-hover-plum {
+  transition: all 0.2s ease-in-out;
+}
+.card-hover-plum:hover {
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 4px 20px -2px rgba(36, 19, 47, 0.6);
+}
