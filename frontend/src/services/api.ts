@@ -1,4 +1,14 @@
-const API_BASE = '/api';
+const DEFAULT_PROD_URL = 'https://trustledger-4hrj.onrender.com';
+
+const getApiBase = (): string => {
+  const metaEnv = (import.meta as any).env;
+  const envUrl = (metaEnv?.VITE_API_URL as string)?.trim();
+  const raw = envUrl || (metaEnv?.PROD ? DEFAULT_PROD_URL : '/api');
+  const cleaned = raw.replace(/\/+$/, '');
+  return cleaned.endsWith('/api') ? cleaned : `${cleaned}/api`;
+};
+
+const API_BASE = getApiBase();
 
 export function getAuthToken(): string | null {
   return localStorage.getItem('trustledger_token');
@@ -24,25 +34,57 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  const fullUrl = `${API_BASE}${endpoint}`;
+  try {
+    response = await fetch(fullUrl, {
+      ...options,
+      headers,
+    });
+  } catch (netErr: any) {
+    throw new Error(`Network error: Unable to reach backend at ${fullUrl}. Please verify your connection.`);
+  }
+
+  // Safely read response text first to handle empty, HTML, or JSON responses
+  const text = await response.text();
+  let data: any = null;
+
+  if (text && text.trim().length > 0) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!response.ok) {
+        throw new Error(`Server error HTTP ${response.status}: ${text.slice(0, 150)}`);
+      }
+      throw new Error(`Unexpected non-JSON response from server (HTTP ${response.status})`);
+    }
+  }
 
   if (!response.ok) {
-    let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
-    try {
-      const errJson = await response.json();
-      if (errJson.detail) {
-        errorMsg = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+    let errorMsg = `HTTP ${response.status}: ${response.statusText || 'Request failed'}`;
+    if (data) {
+      if (typeof data.detail === 'string') {
+        errorMsg = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        // Handle FastAPI 422 validation error arrays cleanly
+        errorMsg = data.detail.map((d: any) => d.msg || JSON.stringify(d)).join('; ');
+      } else if (data.message && typeof data.message === 'string') {
+        errorMsg = data.message;
+      } else if (typeof data === 'string') {
+        errorMsg = data;
       }
-    } catch {
-      // ignore
+    } else if (!text || text.trim().length === 0) {
+      errorMsg = `Server returned an empty response (HTTP ${response.status}).`;
     }
     throw new Error(errorMsg);
   }
 
-  return response.json();
+  // Success with empty body
+  if (data === null) {
+    return {} as T;
+  }
+
+  return data as T;
 }
 
 export const api = {
