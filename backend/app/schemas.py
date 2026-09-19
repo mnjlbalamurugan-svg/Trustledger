@@ -143,6 +143,8 @@ class KYCImageUploadRequest(BaseModel):
     application_id: str
     image_type: str # id_document, live_selfie
     image_data_base64: str
+    capture_source: Optional[str] = "webcam" # webcam, file_upload
+    motion_score: Optional[float] = 0.0
 
 class KYCLivenessRequest(BaseModel):
     session_id: str
@@ -155,7 +157,10 @@ class KYCLivenessResponse(BaseModel):
     replay_check: bool
     liveness_confidence: float
     status: str
-    label: str
+    label: str = "Prototype Liveness Analysis"
+    capture_source: str = "webcam"
+    summary: str
+    reason: Optional[str] = None
 
 class KYCFaceMatchRequest(BaseModel):
     session_id: str
@@ -163,12 +168,17 @@ class KYCFaceMatchRequest(BaseModel):
 class KYCFaceMatchResponse(BaseModel):
     session_id: str
     face_match_score: float
-    face_alignment: str
     facial_similarity: float
-    image_quality: str
-    manipulation_indicators: str
+    match_result: str # MATCH, MISMATCH, NO_FACE_DETECTED
     status: str
-    label: str
+    id_face_detected: bool
+    selfie_face_detected: bool
+    threshold: float = 60.0
+    explanation: str
+    face_alignment: str = "PASS"
+    image_quality: str = "PASS"
+    manipulation_indicators: str = "CHECKED"
+    label: str = "Prototype Face Match Analysis"
 
 class KYCIntegrityRequest(BaseModel):
     session_id: str
@@ -180,7 +190,7 @@ class KYCIntegrityResponse(BaseModel):
     checks: Dict[str, str]
     overall_status: str
     summary: str
-    label: str
+    label: str = "Prototype Image Forensics"
 
 class CompleteKYCRequest(BaseModel):
     session_id: str

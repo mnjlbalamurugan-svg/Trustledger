@@ -19,8 +19,12 @@ from ..security import get_current_user
 router = APIRouter(prefix="/api/applications", tags=["Applications"])
 
 def generate_next_app_number(db: Session, user_id: str) -> str:
-    count = db.query(Application).filter(Application.user_id == user_id).count()
-    return f"TL-{10001 + count}"
+    total_count = db.query(Application).count()
+    candidate = f"TL-{10001 + total_count}"
+    while db.query(Application).filter(Application.application_number == candidate).first():
+        total_count += 1
+        candidate = f"TL-{10001 + total_count}"
+    return candidate
 
 @router.post("", response_model=ApplicationDetailResponse)
 def create_application(

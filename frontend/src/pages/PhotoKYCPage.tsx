@@ -134,12 +134,11 @@ export const PhotoKYCPage: React.FC = () => {
     canvas.height = videoRef.current.videoHeight || 480;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-
-    stopCamera();
 
     if (type === 'id_doc') {
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      stopCamera();
       setIdDocImage(dataUrl);
       api.uploadKYCDocument({
         application_id: selectedAppId || 'APP-DEFAULT',
@@ -149,14 +148,38 @@ export const PhotoKYCPage: React.FC = () => {
         setIdDocHash(res.image_hash);
       });
     } else {
-      setSelfieImage(dataUrl);
-      api.uploadKYCSelfie({
-        application_id: selectedAppId || 'APP-DEFAULT',
-        image_type: 'live_selfie',
-        image_data_base64: dataUrl,
-      }).then((res) => {
-        setSelfieHash(res.image_hash);
-      });
+      // Live selfie: capture initial reference frame
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      const frame1 = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+      // Measure observable temporal micro-movement across live stream
+      setTimeout(() => {
+        let motionScore = 1.8; // Default live camera baseline
+        if (videoRef.current && ctx) {
+          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          const frame2 = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          let diffSum = 0;
+          const len = Math.min(frame1.data.length, frame2.data.length);
+          for (let i = 0; i < len; i += 32) {
+            diffSum += Math.abs(frame1.data[i] - frame2.data[i]);
+          }
+          const avgDiff = diffSum / (len / 32);
+          motionScore = Math.min(10.0, Math.max(0.6, avgDiff * 0.4));
+        }
+        stopCamera();
+
+        setSelfieImage(dataUrl);
+        api.uploadKYCSelfie({
+          application_id: selectedAppId || 'APP-DEFAULT',
+          image_type: 'live_selfie',
+          image_data_base64: dataUrl,
+          capture_source: 'webcam',
+          motion_score: motionScore,
+        }).then((res) => {
+          setSelfieHash(res.image_hash);
+        });
+      }, 250);
     }
   };
 
@@ -180,6 +203,8 @@ export const PhotoKYCPage: React.FC = () => {
           application_id: selectedAppId || 'APP-DEFAULT',
           image_type: 'live_selfie',
           image_data_base64: result,
+          capture_source: 'file_upload',
+          motion_score: 0.0,
         }).then((res) => setSelfieHash(res.image_hash));
       }
     };
@@ -623,32 +648,35 @@ export const PhotoKYCPage: React.FC = () => {
                     )}
                     <div>
                       <div className="text-xs font-bold uppercase tracking-wider">
-                        Liveness Status: {livenessData.status}
+                        Liveness Status: {livenessData.status === 'PASSED' ? 'PASSED' : 'NOT VERIFIED'}
                       </div>
                       <div className="text-xs text-slate-300 mt-0.5">
-                        Confidence: {livenessData.confidence_score}% • Presentation Attack Likelihood: Minimal
+                        {livenessData.summary || `Confidence: ${livenessData.liveness_confidence || 0}%`}
                       </div>
                     </div>
                   </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-plum-800 text-slate-300 border border-plum-border">
+                    {livenessData.capture_source === 'webcam' ? 'Live Camera Capture' : 'Static Image Upload'}
+                  </span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="p-4 rounded-xl bg-charcoal-850 border border-plum-border/60">
-                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Blink Rate Detection</span>
-                    <span className="text-sm font-bold text-mint-fresh mt-1 block">
-                      {livenessData.blink_detected ? 'Natural Pattern Confirmed' : 'Irregular / None'}
+                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Stream Source</span>
+                    <span className="text-sm font-bold text-slate-200 mt-1 block">
+                      {livenessData.capture_source === 'webcam' ? 'Live Webcam Stream' : 'Static Image File'}
                     </span>
                   </div>
                   <div className="p-4 rounded-xl bg-charcoal-850 border border-plum-border/60">
-                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Texture Frequency</span>
-                    <span className="text-sm font-bold text-mint-fresh mt-1 block">
-                      Organic Dermis Verified
+                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Facial Presence</span>
+                    <span className={`text-sm font-bold mt-1 block ${livenessData.face_detected ? 'text-mint-fresh' : 'text-coral-vibrant'}`}>
+                      {livenessData.face_detected ? 'Face Isolated' : 'No Face Detected'}
                     </span>
                   </div>
                   <div className="p-4 rounded-xl bg-charcoal-850 border border-plum-border/60">
-                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Ocular Reflection</span>
-                    <span className="text-sm font-bold text-mint-fresh mt-1 block">
-                      3D Corneal Specular Match
+                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Motion Observation</span>
+                    <span className={`text-sm font-bold mt-1 block ${livenessData.movement_check ? 'text-mint-fresh' : 'text-amber-warm'}`}>
+                      {livenessData.movement_check ? 'Observable Micro-Movement' : (livenessData.capture_source === 'file_upload' ? 'None (Static File)' : 'Low / Static')}
                     </span>
                   </div>
                 </div>
@@ -683,7 +711,7 @@ export const PhotoKYCPage: React.FC = () => {
               <div>
                 <h3 className="text-base font-bold text-white">Biometric Face Matching</h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  1:1 Facial landmark embedding comparison between ID photo and live selfie.
+                  1:1 Facial structure and contour correlation between identity document portrait and selfie.
                 </p>
               </div>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-deep/60 text-violet-electric border border-violet-electric/40">
@@ -697,7 +725,7 @@ export const PhotoKYCPage: React.FC = () => {
                 <div>
                   <h4 className="text-sm font-bold text-white">Compare Facial Embeddings</h4>
                   <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                    Calculates Euclidean distance and cosine similarity across 128 biometric facial nodal points.
+                    Calculates spatial structural correlation, edge contours, and intensity histograms across normalized face crops.
                   </p>
                 </div>
                 <button
@@ -717,29 +745,51 @@ export const PhotoKYCPage: React.FC = () => {
                     : 'bg-coral-subtle/50 border-coral-vibrant/40 text-coral-vibrant'
                 }`}>
                   <div className="flex items-center space-x-3">
-                    <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                    {faceMatchData.match_result === 'MATCH' ? (
+                      <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+                    )}
                     <div>
                       <div className="text-xs font-bold uppercase tracking-wider">
-                        Identity Verification: {faceMatchData.match_result}
+                        Face Match: {faceMatchData.match_result === 'MATCH' ? 'MATCH' : 'MISMATCH'}
                       </div>
                       <div className="text-xs text-slate-300 mt-0.5">
-                        Similarity Score: {faceMatchData.similarity_score}% • Confidence: {faceMatchData.confidence}%
+                        Similarity Score: {faceMatchData.facial_similarity ?? faceMatchData.face_match_score}% • Verification Threshold: {faceMatchData.threshold ?? 60.0}%
                       </div>
                     </div>
+                  </div>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-plum-800 text-slate-300 border border-plum-border">
+                    Prototype Face Match Analysis
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl bg-charcoal-850 border border-plum-border/60 space-y-2">
+                  <div className="text-xs text-slate-200 leading-relaxed font-medium">
+                    {faceMatchData.explanation}
+                  </div>
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    OpenCV Haar Cascade Face Detection + Normalized Spatial Structural Cross-Correlation (Prototype)
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="p-4 rounded-xl bg-charcoal-850 border border-plum-border/60">
-                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">ID Document Photo Hash</span>
-                    <span className="text-xs font-mono text-slate-300 mt-1 block truncate">
-                      {faceMatchData.id_document_hash || idDocHash}
+                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">ID Document Face Detection</span>
+                    <span className={`text-xs font-bold mt-1 block ${faceMatchData.id_face_detected ? 'text-mint-fresh' : 'text-coral-vibrant'}`}>
+                      {faceMatchData.id_face_detected ? 'Portrait Isolated' : 'No Face Detected'}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400 mt-1 block truncate">
+                      Hash: {idDocHash ? `${idDocHash.slice(0, 16)}...` : 'N/A'}
                     </span>
                   </div>
                   <div className="p-4 rounded-xl bg-charcoal-850 border border-plum-border/60">
-                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Live Selfie Photo Hash</span>
-                    <span className="text-xs font-mono text-slate-300 mt-1 block truncate">
-                      {faceMatchData.live_selfie_hash || selfieHash}
+                    <span className="text-[11px] text-slate-400 font-semibold uppercase block">Selfie Face Detection</span>
+                    <span className={`text-xs font-bold mt-1 block ${faceMatchData.selfie_face_detected ? 'text-mint-fresh' : 'text-coral-vibrant'}`}>
+                      {faceMatchData.selfie_face_detected ? 'Face Isolated' : 'No Face Detected'}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400 mt-1 block truncate">
+                      Hash: {selfieHash ? `${selfieHash.slice(0, 16)}...` : 'N/A'}
                     </span>
                   </div>
                 </div>
@@ -786,20 +836,30 @@ export const PhotoKYCPage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl bg-charcoal-850 border border-mint-fresh/40">
+              <div className="p-4 rounded-xl bg-charcoal-850 border border-plum-border/60">
                 <span className="text-[11px] text-slate-400 font-semibold uppercase block">Identity Document</span>
                 <span className="text-sm font-bold text-mint-fresh mt-1 block">SHA-256 Verified</span>
               </div>
-              <div className="p-4 rounded-xl bg-charcoal-850 border border-mint-fresh/40">
+              <div className={`p-4 rounded-xl bg-charcoal-850 border ${
+                livenessData?.status === 'PASSED' ? 'border-mint-fresh/40' : 'border-coral-vibrant/40'
+              }`}>
                 <span className="text-[11px] text-slate-400 font-semibold uppercase block">Liveness Validation</span>
-                <span className="text-sm font-bold text-mint-fresh mt-1 block">
-                  {livenessData?.status || 'PASSED'} ({livenessData?.confidence_score || 94}%)
+                <span className={`text-sm font-bold mt-1 block ${
+                  livenessData?.status === 'PASSED' ? 'text-mint-fresh' : 'text-coral-vibrant'
+                }`}>
+                  {livenessData?.status === 'PASSED' ? `PASSED (${livenessData.liveness_confidence}%)` : 'NOT VERIFIED (Static File)'}
                 </span>
               </div>
-              <div className="p-4 rounded-xl bg-charcoal-850 border border-mint-fresh/40">
+              <div className={`p-4 rounded-xl bg-charcoal-850 border ${
+                faceMatchData?.match_result === 'MATCH' ? 'border-mint-fresh/40' : 'border-coral-vibrant/40'
+              }`}>
                 <span className="text-[11px] text-slate-400 font-semibold uppercase block">Biometric Face Match</span>
-                <span className="text-sm font-bold text-mint-fresh mt-1 block">
-                  {faceMatchData?.match_result || 'MATCH'} ({faceMatchData?.similarity_score || 96}%)
+                <span className={`text-sm font-bold mt-1 block ${
+                  faceMatchData?.match_result === 'MATCH' ? 'text-mint-fresh' : 'text-coral-vibrant'
+                }`}>
+                  {faceMatchData?.match_result === 'MATCH'
+                    ? `MATCH (${faceMatchData.facial_similarity ?? faceMatchData.face_match_score}%)`
+                    : `MISMATCH (${faceMatchData?.facial_similarity ?? faceMatchData?.face_match_score ?? 0}%)`}
                 </span>
               </div>
             </div>

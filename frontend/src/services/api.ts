@@ -157,7 +157,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  uploadKYCSelfie: (payload: { application_id: string; image_type: string; image_data_base64: string }) =>
+  uploadKYCSelfie: (payload: { application_id: string; image_type: string; image_data_base64: string; capture_source?: string; motion_score?: number }) =>
     request<any>('/kyc/selfie', {
       method: 'POST',
       body: JSON.stringify(payload),

@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -171,6 +172,17 @@ def capture_live_selfie(
     with open(file_path, "wb") as f:
         f.write(raw_bytes)
 
+    # Save capture source and motion metadata in sidecar
+    meta_path = file_path.with_suffix('.meta.json')
+    try:
+        with open(meta_path, "w") as mf:
+            json.dump({
+                "capture_source": payload.capture_source or "webcam",
+                "motion_score": payload.motion_score or 0.0
+            }, mf)
+    except Exception:
+        pass
+
     existing_img = db.query(KYCImage).filter(
         KYCImage.kyc_session_id == session.id,
         KYCImage.image_type == "live_selfie"
@@ -195,7 +207,7 @@ def capture_live_selfie(
         application_id=app.id,
         artifact_type="Live Selfie Captured",
         artifact_hash=img_hash,
-        metadata={"step": "KYC_SELFIE_CAPTURE", "liveness_candidate": True}
+        metadata={"step": "KYC_SELFIE_CAPTURE", "liveness_candidate": True, "source": payload.capture_source}
     )
 
     return {
@@ -207,18 +219,106 @@ def capture_live_selfie(
     }
 
 @router.post("/liveness", response_model=KYCLivenessResponse)
-def check_liveness(payload: KYCLivenessRequest, current_user: User = Depends(get_current_user)):
-    result = perform_liveness_check(payload.session_id)
+def check_liveness(
+    payload: KYCLivenessRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    session = db.query(KYCSession).filter(
+        KYCSession.id == payload.session_id,
+        KYCSession.user_id == current_user.id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="KYC session not found")
+
+    selfie_img = db.query(KYCImage).filter(
+        KYCImage.kyc_session_id == session.id,
+        KYCImage.image_type == "live_selfie"
+    ).first()
+
+    selfie_path = selfie_img.image_path if selfie_img else None
+    capture_source = "webcam"
+    motion_score = 0.0
+
+    if selfie_path:
+        meta_path = Path(selfie_path).with_suffix('.meta.json')
+        if meta_path.exists():
+            try:
+                with open(meta_path, 'r') as mf:
+                    meta = json.load(mf)
+                    capture_source = meta.get("capture_source", "webcam")
+                    motion_score = meta.get("motion_score", 0.0)
+            except Exception:
+                pass
+
+    result = perform_liveness_check(
+        session_id=session.id,
+        selfie_image_path=selfie_path,
+        capture_source=capture_source,
+        motion_score=motion_score
+    )
+
+    session.liveness_score = result.get("liveness_confidence", 0.0)
+    db.commit()
     return KYCLivenessResponse(**result)
 
 @router.post("/face-match", response_model=KYCFaceMatchResponse)
-def check_face_match(payload: KYCFaceMatchRequest, current_user: User = Depends(get_current_user)):
-    result = perform_face_match(payload.session_id)
+def check_face_match(
+    payload: KYCFaceMatchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    session = db.query(KYCSession).filter(
+        KYCSession.id == payload.session_id,
+        KYCSession.user_id == current_user.id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="KYC session not found")
+
+    id_img = db.query(KYCImage).filter(
+        KYCImage.kyc_session_id == session.id,
+        KYCImage.image_type == "id_document"
+    ).first()
+    selfie_img = db.query(KYCImage).filter(
+        KYCImage.kyc_session_id == session.id,
+        KYCImage.image_type == "live_selfie"
+    ).first()
+
+    id_path = id_img.image_path if id_img else None
+    selfie_path = selfie_img.image_path if selfie_img else None
+
+    result = perform_face_match(
+        session_id=session.id,
+        id_image_path=id_path,
+        selfie_image_path=selfie_path
+    )
+
+    session.face_match_score = result.get("face_match_score", 0.0)
+    db.commit()
     return KYCFaceMatchResponse(**result)
 
 @router.post("/image-integrity", response_model=KYCIntegrityResponse)
-def check_image_integrity(payload: KYCIntegrityRequest, current_user: User = Depends(get_current_user)):
-    result = perform_image_integrity_check(payload.session_id, is_suspicious_scenario=False)
+def check_image_integrity(
+    payload: KYCIntegrityRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    session = db.query(KYCSession).filter(
+        KYCSession.id == payload.session_id,
+        KYCSession.user_id == current_user.id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="KYC session not found")
+
+    selfie_img = db.query(KYCImage).filter(
+        KYCImage.kyc_session_id == session.id,
+        KYCImage.image_type == "live_selfie"
+    ).first()
+    selfie_path = selfie_img.image_path if selfie_img else None
+
+    result = perform_image_integrity_check(session_id=session.id, image_path=selfie_path)
+    session.manipulation_score = result.get("manipulation_confidence", 0.0)
+    db.commit()
     return KYCIntegrityResponse(**result)
 
 @router.post("/{session_id}/complete")
@@ -236,28 +336,36 @@ def complete_kyc_session(
         raise HTTPException(status_code=404, detail="KYC Session not found")
 
     session.status = "COMPLETED"
-    session.face_match_score = 96.0
-    session.liveness_score = 96.0
-    session.manipulation_score = 15.0
-    session.risk_level = "LOW"
+
+    # Evaluate dynamic risk level based on actual calculated scores:
+    if session.face_match_score < 60.0:
+        session.risk_level = "CRITICAL" if session.face_match_score < 30.0 else "HIGH"
+        app_status = "FAILED" if session.face_match_score < 30.0 else "REVIEW_REQUIRED"
+    elif session.liveness_score < 50.0:
+        session.risk_level = "MEDIUM"
+        app_status = "REVIEW_REQUIRED"
+    else:
+        session.risk_level = "LOW"
+        app_status = "VERIFIED"
 
     app = session.application
     if app:
-        app.kyc_status = "VERIFIED"
+        app.kyc_status = app_status
         db.commit()
 
-        # Append completion event to ledger
+        # Append completion event to ledger with real calculated scores
         append_ledger_record(
             db=db,
             user_id=current_user.id,
             application_id=app.id,
             artifact_type="KYC Verification Summary Recorded",
-            artifact_hash=calculate_sha256(f"{session.id}_kyc_completed".encode("utf-8")),
+            artifact_hash=calculate_sha256(f"{session.id}_kyc_completed_{session.face_match_score}_{session.liveness_score}".encode("utf-8")),
             metadata={
                 "face_match": session.face_match_score,
                 "liveness": session.liveness_score,
                 "deepfake_confidence": session.manipulation_score,
-                "decision": "VERIFIED"
+                "decision": app_status,
+                "label": "Prototype Biometric Analysis"
             }
         )
 
@@ -265,7 +373,7 @@ def complete_kyc_session(
         audit = AuditEvent(
             user_id=current_user.id,
             event_type="KYC_RESULT_ATTACHED",
-            description=f"Attached verified KYC result to application {app.application_number}",
+            description=f"Attached KYC result to application {app.application_number} (Face Match: {session.face_match_score}%, Liveness: {session.liveness_score}%, Status: {app_status})",
             user_email=current_user.email,
             application_id=app.id
         )
